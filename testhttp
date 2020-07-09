@@ -1,0 +1,49 @@
+#!/bin/bash
+
+tokil=0 # tu będziemy przechowywać numer procesu do zabicia
+
+on_kill() { # gdy zabijamy proces
+    if [[ $tokil != 0 ]] ; then #
+        kill $tokil
+    fi
+    exit 1
+}
+
+trap 'on_kill' SIGINT # powyższa funkcja uruchamiana w przypadku SIGINT-a
+
+if [[ $2 != "https"* ]]
+then # przypadek http
+    x=${2:7} # w x będzie domena z portem 
+    x=${x%%/*}
+    if [[ $x != *":"* ]]; then
+        x="$x:80"
+    elif [[ $x == *":" ]]; then
+        x="$x""80"
+    fi
+    ./testhttp_raw $x $1 $2 # zwykłe uruchomienie
+    exit 0
+else # przypadek https
+    x=${2:8} # w x będzie domena z portem 
+    x=${x%%/*}
+    if [[ $x != *":"* ]]; then
+        x="$x:443"
+    elif [[ $x == *":" ]]; then
+        x="$x""443"
+    fi
+    
+    printf "\tsyslog = no\n\tpid = \n\tforeground=yes\n\tsslVersion = all\n
+    [service]\n\tclient = yes\n\taccept = 127.0.0.1:41571\n\tconnect = $x\n" |
+    stunnel -fd 0 2>/dev/null & # współbieżnie uruchamiamy stunnel
+    
+    export tokil=$! #zapisujemy numer procesu
+    
+    # póki nie będzie słuchającego procesu w porcie 41571, póty nie wchodzimy
+    while ! (netstat -na | grep -Eq ":41571 .*LISTEN" 2>/dev/null ) ; do 
+        :
+    done
+
+    ./testhttp_raw 127.0.0.1:41571 $1 $2 # uruchamiamy raw, łącząc się z tunelem
+    kill $tokil
+    exit 0
+fi
+
